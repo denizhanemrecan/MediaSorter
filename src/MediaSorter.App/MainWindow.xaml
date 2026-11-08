@@ -1,0 +1,160 @@
+<Window x:Class="MediaSorter.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:MediaSorter.App"
+        Title="MediaSorter" Width="1360" Height="820" MinWidth="980" MinHeight="600"
+        Background="{StaticResource Bg}" WindowStartupLocation="CenterScreen">
+    <Window.DataContext>
+        <local:MainViewModel/>
+    </Window.DataContext>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="340"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Border}" BorderThickness="0,0,1,0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="16">
+                    <TextBlock Text="MediaSorter" FontSize="20" FontWeight="SemiBold"/>
+                    <TextBlock Text="Sort photos and videos by capture date, isolate and recover broken files."
+                               Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+
+                    <TextBlock Text="SOURCES" Style="{StaticResource Header}"/>
+                    <ListBox ItemsSource="{Binding Sources}" SelectedItem="{Binding SelectedSource}" Height="110"
+                             Background="{StaticResource Bg}" Foreground="{StaticResource Fg}" BorderBrush="{StaticResource Border}"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button Content="Add folders..." Command="{Binding AddSourceCommand}"/>
+                        <Button Content="Remove" Command="{Binding RemoveSourceCommand}"/>
+                    </StackPanel>
+
+                    <TextBlock Text="TARGET" Style="{StaticResource Header}"/>
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="..." Command="{Binding BrowseTargetCommand}" Margin="6,0,0,0" Padding="10,3"/>
+                        <TextBox Text="{Binding TargetRoot, UpdateSourceTrigger=PropertyChanged}"/>
+                    </DockPanel>
+                    <TextBlock Text="Creates Gallery\, Broken\ and Recovered\ inside this folder."
+                               Foreground="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+                    <TextBlock Text="FOLDER LAYOUT" Style="{StaticResource Header}"/>
+                    <ComboBox IsEditable="True" ItemsSource="{Binding TemplatePresets}"
+                              Text="{Binding Template, UpdateSourceTrigger=PropertyChanged}"/>
+                    <TextBlock Text="{Binding TemplateHelp}" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    <TextBlock Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"
+                               Text="{}{Source} = Taken (capture date found) or Modified (fell back to file date)."/>
+
+                    <TextBlock Text="OPTIONS" Style="{StaticResource Header}"/>
+                    <CheckBox Content="Move instead of copy" IsChecked="{Binding Move}"/>
+                    <CheckBox Content="Fix wrong extensions (real format by content)" IsChecked="{Binding FixExtensions}"/>
+                    <CheckBox Content="Skip byte-identical duplicates" IsChecked="{Binding SkipDuplicates}"/>
+                    <CheckBox Content="Copy unrecognized files to Other\" IsChecked="{Binding IncludeUnknown}"/>
+                    <CheckBox Content="Deep-verify videos with ffprobe (slower)" IsChecked="{Binding DeepVerify}"/>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
+                        <Button Content="Analyze" Command="{Binding AnalyzeCommand}"/>
+                        <Button Command="{Binding ExecuteCommand}" Style="{StaticResource Primary}">
+                            <Button.Content>
+                                <TextBlock Foreground="#1E1F22">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="Copy"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Move}" Value="True">
+                                                    <Setter Property="Text" Value="Move"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Button.Content>
+                        </Button>
+                    </StackPanel>
+                    <TextBlock Text="RECOVERY" Style="{StaticResource Header}"/>
+                    <DockPanel>
+                        <ComboBox DockPanel.Dock="Right" Width="70" ItemsSource="{x:Static local:MainViewModel.Rotations}" SelectedItem="{Binding RecoveryRotation}"/>
+                        <TextBlock Text="Rotate output clockwise (°)" VerticalAlignment="Center"/>
+                    </DockPanel>
+                    <TextBlock Text="Orientation metadata is lost with the moov atom; portrait phone clips usually need 90."
+                               Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,8"/>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Recover broken videos" Command="{Binding RecoverBrokenCommand}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="Undo last run" Command="{Binding UndoCommand}"/>
+                        <Button Content="Open target" Command="{Binding OpenTargetCommand}"/>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <Grid Grid.Column="1" Margin="12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="5"/>
+                <RowDefinition Height="160"/>
+            </Grid.RowDefinitions>
+
+            <DockPanel Margin="0,0,0,8">
+                <ComboBox DockPanel.Dock="Right" Width="130" ItemsSource="{x:Static local:MainViewModel.Filters}" SelectedItem="{Binding Filter}"/>
+                <TextBlock Text="{Binding Summary}" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
+            </DockPanel>
+
+            <DataGrid Grid.Row="1" ItemsSource="{Binding RowsView}" AutoGenerateColumns="False" IsReadOnly="True"
+                      HeadersVisibility="Column" GridLinesVisibility="None" RowHeight="24"
+                      Background="{StaticResource Bg}" Foreground="{StaticResource Fg}" BorderBrush="{StaticResource Border}"
+                      RowBackground="{StaticResource Bg}" AlternatingRowBackground="#232427"
+                      EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                <DataGrid.ColumnHeaderStyle>
+                    <Style TargetType="DataGridColumnHeader">
+                        <Setter Property="Background" Value="{StaticResource Panel}"/>
+                        <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+                        <Setter Property="Padding" Value="6,4"/>
+                        <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+                        <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                    </Style>
+                </DataGrid.ColumnHeaderStyle>
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow">
+                        <Setter Property="ToolTip" Value="{Binding SourcePath}"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsBroken}" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource Danger}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="220"/>
+                    <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="70"/>
+                    <DataGridTextColumn Header="Date" Binding="{Binding Date}" Width="120"/>
+                    <DataGridTextColumn Header="From" Binding="{Binding DateSource}" Width="80"/>
+                    <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="75"/>
+                    <DataGridTextColumn Header="Destination" Binding="{Binding Destination}" Width="2*"/>
+                    <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*"/>
+                    <DataGridTextColumn Header="Recovery" Binding="{Binding Recovery}" Width="120"/>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <GridSplitter Grid.Row="2" HorizontalAlignment="Stretch" Background="Transparent"/>
+
+            <ListBox Grid.Row="3" x:Name="LogList" ItemsSource="{Binding LogLines}" FontFamily="Cascadia Mono, Consolas" FontSize="11"
+                     Background="{StaticResource Panel}" Foreground="{StaticResource Muted}" BorderBrush="{StaticResource Border}"/>
+        </Grid>
+
+        <Border Grid.Row="1" Grid.ColumnSpan="2" Background="{StaticResource Panel}" BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Padding="12,6">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Cancel" Command="{Binding CancelCommand}" Margin="0"/>
+                <ProgressBar DockPanel.Dock="Right" Width="260" Height="8" Margin="12,0" Maximum="1"
+                             Value="{Binding ProgressValue, Mode=OneWay}" IsIndeterminate="{Binding ProgressIndeterminate}"
+                             Foreground="{StaticResource Accent}" Background="{StaticResource Bg}" BorderThickness="0"/>
+                <TextBlock Text="{Binding Status}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

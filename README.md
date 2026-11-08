@@ -25,7 +25,9 @@ Recovered/
   (`IMG_20170211_155100`, `VID-20170211-WA0001`, `11_February_2017_15.51`, Turkish month names), then last-modified time.
 - **Configurable layout** with tokens: `{Year}` `{Month}` `{MonthNum}` `{MonthName}` `{Day}` `{Kind}` `{Source}` `{Format}`.
   `{Source}` expands to `Taken` or `Modified` depending on whether a capture date was found.
-- **Health checks**: truncated JPEG/PNG, ISO-BMFF atoms that run past end of file, missing `moov`; optional ffprobe deep verify.
+- **Health checks**: truncated JPEG/PNG, ISO-BMFF atoms that run past end of file, missing `moov`, and (on by default)
+  a full ffmpeg decode of every photo. The decode pass matters for carved files whose markers are intact but whose
+  image data belongs to other files; structure checks alone pass those. Optional ffprobe verify for videos.
 - **Duplicate detection** (size, then SHA-256) against both the run and what is already in the target.
 - **Copy by default**, move optional. Every run writes a journal to `.mediasorter/` and can be undone.
 - **Video recovery** for H.264 MP4/MOV files without a `moov` atom:
@@ -40,6 +42,11 @@ Recovered/
   Verified on a Samsung 4K30 recording and an iPhone 1080p30 recording, both carved without `moov`.
 
   HEVC and legacy codecs (Sorenson, MPEG-4 Part 2) are reported but not rebuilt.
+- **Photo salvage** for damaged JPEGs (the missing data is gone, so this saves what is left):
+  - the largest intact embedded preview from the EXIF/APPn segments (`*_preview.jpg`, typically 160x120 to 570x375),
+  - the intact top region of the main image (`*_partial.jpg`), cut at the first MCU row where decoded luma shows a
+    discontinuity far above local texture, or where the decoder's flat fill begins.
+  Both honour EXIF orientation.
 
 ## Requirements
 
@@ -61,5 +68,6 @@ mediasorter inspect <file>...
 mediasorter plan    --source D:\Phone --source E:\Old --target F:\Photos [--template "{Source}/{Year}/{Kind}/{Month}"]
 mediasorter run     --source D:\Phone --target F:\Photos [--move]
 mediasorter undo    --target F:\Photos
-mediasorter recover broken.mp4 [--out fixed.mp4] [--fps 30] [--size 1920x1080] [--rotate 90]
+mediasorter recover D:\Photos\Broken [--out-dir D:\Photos\Recovered]      # photos and videos, healthy files skipped
+mediasorter recover broken.mp4 [--fps 30] [--size 1920x1080] [--rotate 90]
 ```

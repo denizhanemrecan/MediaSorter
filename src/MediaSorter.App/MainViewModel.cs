@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Windows.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MediaSorter.Core.Analysis;
 using MediaSorter.Core.Planning;
 using MediaSorter.Core.Recovery;
 using MediaSorter.Core.Tools;
@@ -45,6 +46,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _skipDuplicates = true;
     [ObservableProperty] private bool _includeUnknown;
     [ObservableProperty] private bool _deepVerify;
+    [ObservableProperty] private bool _verifyPhotos = true;
     [ObservableProperty] private string _filter = "All";
     [ObservableProperty] private int _recoveryRotation;
 
@@ -69,6 +71,8 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnFixExtensionsChanged(bool value) => InvalidatePlan();
     partial void OnSkipDuplicatesChanged(bool value) => InvalidatePlan();
     partial void OnIncludeUnknownChanged(bool value) => InvalidatePlan();
+    partial void OnVerifyPhotosChanged(bool value) => InvalidatePlan();
+    partial void OnDeepVerifyChanged(bool value) => InvalidatePlan();
     partial void OnTargetRootChanged(string value) => InvalidatePlan();
 
     [RelayCommand]
@@ -169,32 +173,63 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanRecover))]
     private Task RecoverBroken() => RunBusy("Recovering", async ct =>
     {
-        var recovery = new VideoRecovery(Ffmpeg!);
         var outDir = Path.Combine(TargetRoot, Planner.RecoveredFolder);
         var targets = Rows.Where(r => r.IsRecoverable).ToList();
-        for (int i = 0; i < targets.Count; i++)
+        var photos = targets.Where(r => r.Item.Media.Type.Kind == MediaKind.Photo).ToList();
+        var videos = targets.Where(r => r.Item.Media.Type.Kind == MediaKind.Video).ToList();
+        var ui = new Progress<Action>(a => a());
+        int done = 0, salvaged = 0;
+
+        void Finished(PlanRow row, bool success, string message)
         {
-            var row = targets[i];
-            var input = File.Exists(row.Item.Destination) ? row.Item.Destination! : row.SourcePath;
-            var output = Path.Combine(outDir, Path.GetFileNameWithoutExtension(input) + "_recovered.mp4");
-            Status = $"Recovering {i + 1}/{targets.Count}: {row.FileName}";
-            ProgressValue = (double)i / targets.Count;
-            row.Recovery = "working...";
-            Log($"--- {row.FileName}");
-            var progress = new Progress<string>(Log);
+            int n = Interlocked.Increment(ref done);
+            if (success) Interlocked.Increment(ref salvaged);
+            ((IProgress<Action>)ui).Report(() =>
+            {
+                row.Recovery = success ? message : "nothing: " + message;
+                ProgressIndeterminate = false;
+                ProgressValue = (double)n / targets.Count;
+                Status = $"Recovering {n:N0} / {targets.Count:N0}";
+            });
+        }
+
+        var photoRecovery = new PhotoRecovery(Ffmpeg!);
+        await Task.Run(() => Parallel.ForEachAsync(photos, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount / 2), CancellationToken = ct }, async (row, token) =>
+        {
             try
             {
-                var result = await Task.Run(() => recovery.RecoverAsync(input, output, new RecoveryOptions { RotateClockwise = RecoveryRotation }, progress, ct), ct);
-                row.Recovery = result.Success ? "recovered" : "failed: " + result.Message;
+                var result = await photoRecovery.RecoverAsync(InputOf(row), Path.Combine(outDir, "Photos"), token);
+                Finished(row, result.Success, result.Message);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                row.Recovery = "failed: " + ex.Message;
+                Finished(row, false, ex.Message);
+            }
+        }), ct);
+
+        var videoRecovery = new VideoRecovery(Ffmpeg!);
+        foreach (var row in videos)
+        {
+            Log($"--- {row.FileName}");
+            var input = InputOf(row);
+            var output = Path.Combine(outDir, "Videos", Path.GetFileNameWithoutExtension(input) + "_recovered.mp4");
+            try
+            {
+                var result = await Task.Run(() => videoRecovery.RecoverAsync(input, output, new RecoveryOptions { RotateClockwise = RecoveryRotation }, new Progress<string>(Log), ct), ct);
+                Finished(row, result.Success, result.Success ? "video rebuilt" : result.Message);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Finished(row, false, ex.Message);
                 Log(ex.Message);
             }
         }
-        Status = $"Recovery finished. Output: {outDir}";
+
+        Log($"Recovery: {salvaged:N0} of {targets.Count:N0} files gave something back. Output: {outDir}");
+        Status = $"Recovery finished: {salvaged:N0} / {targets.Count:N0} salvaged. Output: {outDir}";
     });
+
+    private static string InputOf(PlanRow row) => File.Exists(row.Item.Destination) ? row.Item.Destination! : row.SourcePath;
 
     private bool CanCancel() => IsBusy;
 
@@ -211,6 +246,7 @@ public sealed partial class MainViewModel : ObservableObject
         SkipDuplicates = SkipDuplicates,
         IncludeUnknown = IncludeUnknown,
         DeepVerifyVideos = DeepVerify && Ffmpeg is not null,
+        VerifyPhotosByDecoding = VerifyPhotos && Ffmpeg is not null,
         FfmpegDirectory = Ffmpeg is null ? null : Path.GetDirectoryName(Ffmpeg.Ffmpeg)
     };
 

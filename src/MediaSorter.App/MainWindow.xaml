@@ -53,6 +53,8 @@
                     <CheckBox Content="Fix wrong extensions (real format by content)" IsChecked="{Binding FixExtensions}"/>
                     <CheckBox Content="Skip byte-identical duplicates" IsChecked="{Binding SkipDuplicates}"/>
                     <CheckBox Content="Copy unrecognized files to Other\" IsChecked="{Binding IncludeUnknown}"/>
+                    <CheckBox Content="Verify photos by decoding (recommended)" IsChecked="{Binding VerifyPhotos}"
+                              ToolTip="Catches photos whose structure looks fine but whose image data is corrupt. Needs ffmpeg."/>
                     <CheckBox Content="Deep-verify videos with ffprobe (slower)" IsChecked="{Binding DeepVerify}"/>
 
                     <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
@@ -77,12 +79,12 @@
                     <TextBlock Text="RECOVERY" Style="{StaticResource Header}"/>
                     <DockPanel>
                         <ComboBox DockPanel.Dock="Right" Width="70" ItemsSource="{x:Static local:MainViewModel.Rotations}" SelectedItem="{Binding RecoveryRotation}"/>
-                        <TextBlock Text="Rotate output clockwise (°)" VerticalAlignment="Center"/>
+                        <TextBlock Text="Rotate recovered videos clockwise (°)" VerticalAlignment="Center"/>
                     </DockPanel>
-                    <TextBlock Text="Orientation metadata is lost with the moov atom; portrait phone clips usually need 90."
+                    <TextBlock Text="Photos: saves the embedded preview and the intact top part. Videos: rebuilds the stream; orientation is lost with the moov atom, portrait phone clips usually need 90."
                                Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,8"/>
                     <StackPanel Orientation="Horizontal">
-                        <Button Content="Recover broken videos" Command="{Binding RecoverBrokenCommand}"/>
+                        <Button Content="Recover broken files" Command="{Binding RecoverBrokenCommand}"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                         <Button Content="Undo last run" Command="{Binding UndoCommand}"/>
@@ -137,7 +139,7 @@
                     <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="75"/>
                     <DataGridTextColumn Header="Destination" Binding="{Binding Destination}" Width="2*"/>
                     <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*"/>
-                    <DataGridTextColumn Header="Recovery" Binding="{Binding Recovery}" Width="120"/>
+                    <DataGridTextColumn Header="Recovery" Binding="{Binding Recovery}" Width="220"/>
                 </DataGrid.Columns>
             </DataGrid>
 

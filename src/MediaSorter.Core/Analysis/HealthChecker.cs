@@ -17,9 +17,16 @@ public sealed record HealthReport(HealthStatus Status, string Reason)
     public bool IsBroken => Status == HealthStatus.Broken;
 }
 
+public sealed record VerifyOptions(FfmpegTools? Ffmpeg, bool DecodePhotos, bool ProbeVideos)
+{
+    public static readonly VerifyOptions StructureOnly = new(null, false, false);
+}
+
 public static class HealthChecker
 {
-    public static async Task<HealthReport> CheckAsync(string path, FileType type, FfmpegTools? deepVerify, CancellationToken ct)
+    private static readonly string[] DecodableStills = ["JPEG", "PNG", "GIF", "WEBP", "BMP", "TIFF"];
+
+    public static async Task<HealthReport> CheckAsync(string path, FileType type, VerifyOptions verify, CancellationToken ct)
     {
         try
         {
@@ -30,9 +37,16 @@ public static class HealthChecker
                 _ when type.IsIsoBmff => CheckIsoBmff(path, type),
                 _ => HealthReport.Ok
             };
-            if (report.IsBroken || deepVerify is null || type.Kind != MediaKind.Video)
+            if (report.IsBroken || verify.Ffmpeg is null)
                 return report;
-            return await deepVerify.ProbeAsync(path, ct).ConfigureAwait(false);
+
+            // Structure alone misses carved files whose markers are intact but whose entropy data
+            // belongs to other files; only a real decode catches those.
+            if (verify.DecodePhotos && type.Kind == MediaKind.Photo && DecodableStills.Contains(type.Format))
+                return await verify.Ffmpeg.VerifyImageAsync(path, ct).ConfigureAwait(false);
+            if (verify.ProbeVideos && type.Kind == MediaKind.Video)
+                return await verify.Ffmpeg.ProbeAsync(path, ct).ConfigureAwait(false);
+            return report;
         }
         catch (IOException ex)
         {

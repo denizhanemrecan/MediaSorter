@@ -25,12 +25,13 @@ public sealed class Planner
         progress?.Report(new ProgressInfo("Scanning", 0, 0));
         var files = EnumerateSources(options.Sources, managedRoots, ct);
 
-        var ffmpeg = options.DeepVerifyVideos ? FfmpegTools.Locate(options.FfmpegDirectory) : null;
+        var ffmpeg = options.DeepVerifyVideos || options.VerifyPhotosByDecoding ? FfmpegTools.Locate(options.FfmpegDirectory) : null;
+        var verify = new VerifyOptions(ffmpeg, options.VerifyPhotosByDecoding, options.DeepVerifyVideos);
         var infos = new ConcurrentBag<MediaInfo>();
         int done = 0;
         await Parallel.ForEachAsync(files, new ParallelOptions { MaxDegreeOfParallelism = options.MaxParallelism, CancellationToken = ct }, async (path, token) =>
         {
-            infos.Add(await AnalyzeAsync(path, ffmpeg, token).ConfigureAwait(false));
+            infos.Add(await AnalyzeAsync(path, verify, token).ConfigureAwait(false));
             int n = Interlocked.Increment(ref done);
             if (n % 25 == 0 || n == files.Count)
                 progress?.Report(new ProgressInfo("Analyzing", n, files.Count, path));
@@ -56,7 +57,7 @@ public sealed class Planner
         return new SortPlan { Options = options, Items = items.OrderBy(i => i.Media.Path, StringComparer.OrdinalIgnoreCase).ToList() };
     }
 
-    public static async Task<MediaInfo> AnalyzeAsync(string path, FfmpegTools? deepVerify, CancellationToken ct)
+    public static async Task<MediaInfo> AnalyzeAsync(string path, VerifyOptions verify, CancellationToken ct)
     {
         long size = 0;
         try
@@ -66,7 +67,7 @@ public sealed class Planner
             var date = DateResolver.Resolve(path, type);
             var health = type.Kind == MediaKind.Unknown
                 ? HealthReport.Ok
-                : await HealthChecker.CheckAsync(path, type, deepVerify, ct).ConfigureAwait(false);
+                : await HealthChecker.CheckAsync(path, type, verify, ct).ConfigureAwait(false);
             return new MediaInfo(path, size, type, date, health);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

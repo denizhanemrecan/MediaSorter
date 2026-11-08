@@ -41,7 +41,9 @@ static int Usage()
         mediasorter plan    --source <dir> [--source <dir>...] --target <dir> [options]
         mediasorter run     --source <dir> [--source <dir>...] --target <dir> [options]
         mediasorter undo    --target <dir> [--journal <file>]
-        mediasorter recover <file> [--out <file>] [--fps <rate>] [--size <WxH>] [--rotate 90|180|270]
+        mediasorter recover <file|dir>... [--out-dir <dir>] [--fps <rate>] [--size <WxH>] [--rotate 90|180|270]
+                            videos: rebuild moov-less H.264 MP4/MOV
+                            photos: extract embedded preview + intact top region of damaged JPEGs
 
         options:
           --template <t>     folder layout, default "{Year}/{Kind}/{Month}"
@@ -51,6 +53,7 @@ static int Usage()
           --keep-duplicates  don't skip byte-identical files
           --include-unknown  copy unrecognized files into Other/
           --deep-verify      probe every video with ffprobe
+          --no-photo-verify  skip full decode of photos (faster, misses corrupt image data)
           --ffmpeg <dir>     directory containing ffmpeg/ffprobe
         """);
     return 1;
@@ -58,10 +61,10 @@ static int Usage()
 
 static async Task<int> Inspect(string[] files, CancellationToken ct)
 {
-    var ffmpeg = FfmpegTools.Locate();
+    var verify = new VerifyOptions(FfmpegTools.Locate(), DecodePhotos: true, ProbeVideos: true);
     foreach (var file in files)
     {
-        var info = await Planner.AnalyzeAsync(Path.GetFullPath(file), ffmpeg, ct);
+        var info = await Planner.AnalyzeAsync(Path.GetFullPath(file), verify, ct);
         Console.WriteLine(file);
         Console.WriteLine($"  type    : {info.Type.Kind} / {info.Type.Format} (expected extension {info.Type.Extension}{(FileTypeDetector.ExtensionMatches(file, info.Type) ? "" : ", MISMATCH")})");
         Console.WriteLine($"  date    : {info.Date.Value:yyyy-MM-dd HH:mm:ss} from {info.Date.Source} ({info.Date.Detail})");
@@ -83,6 +86,7 @@ static async Task<int> Sort(string[] args, bool execute, CancellationToken ct)
         SkipDuplicates = !a.Has("--keep-duplicates"),
         IncludeUnknown = a.Has("--include-unknown"),
         DeepVerifyVideos = a.Has("--deep-verify"),
+        VerifyPhotosByDecoding = !a.Has("--no-photo-verify"),
         FfmpegDirectory = a.Value("--ffmpeg")
     };
     if (options.Sources.Count == 0)
@@ -130,8 +134,8 @@ static async Task<int> Undo(string[] args, CancellationToken ct)
 static async Task<int> Recover(string[] args, CancellationToken ct)
 {
     var a = new Args(args);
-    var input = a.Positional.FirstOrDefault() ?? throw new ArgumentException("recover needs a file.");
-    var output = a.Value("--out") ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(input))!, Path.GetFileNameWithoutExtension(input) + "_recovered.mp4");
+    if (a.Positional.Count == 0)
+        throw new ArgumentException("recover needs at least one file or directory.");
     var ffmpeg = FfmpegTools.Locate(a.Value("--ffmpeg")) ?? throw new ArgumentException("ffmpeg/ffprobe not found. Install ffmpeg or pass --ffmpeg <dir>.");
 
     (int, int)? size = null;
@@ -140,16 +144,59 @@ static async Task<int> Recover(string[] args, CancellationToken ct)
         var parts = s.Split('x', 'X');
         size = (int.Parse(parts[0], CultureInfo.InvariantCulture), int.Parse(parts[1], CultureInfo.InvariantCulture));
     }
-    var options = new RecoveryOptions
+    var videoOptions = new RecoveryOptions
     {
         FrameRate = a.Value("--fps") is { } fps ? double.Parse(fps, CultureInfo.InvariantCulture) : null,
         Resolution = size,
         RotateClockwise = a.Value("--rotate") is { } rot ? int.Parse(rot, CultureInfo.InvariantCulture) : 0
     };
 
-    var result = await new VideoRecovery(ffmpeg).RecoverAsync(input, output, options, new Progress<string>(Console.WriteLine), ct);
-    Console.WriteLine(result.Success ? $"OK: {result.OutputPath}" : $"FAILED: {result.Message}");
-    return result.Success ? 0 : 4;
+    var inputs = a.Positional.SelectMany(p => Directory.Exists(p)
+            ? Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories)
+            : [p])
+        .Select(Path.GetFullPath)
+        .ToList();
+    var outDir = a.Value("--out-dir");
+    var photoRecovery = new PhotoRecovery(ffmpeg);
+    var videoRecovery = new VideoRecovery(ffmpeg);
+    int ok = 0, failed = 0;
+    var gate = new object();
+
+    var photos = inputs.Where(i => FileTypeDetector.Detect(i).Kind == MediaKind.Photo).ToList();
+    var videos = inputs.Where(i => FileTypeDetector.Detect(i).Kind == MediaKind.Video).ToList();
+
+    var verify = new VerifyOptions(ffmpeg, DecodePhotos: true, ProbeVideos: false);
+    int healthy = 0;
+    await Parallel.ForEachAsync(photos, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount / 2), CancellationToken = ct }, async (input, token) =>
+    {
+        var type = FileTypeDetector.Detect(input);
+        if (!(await HealthChecker.CheckAsync(input, type, verify, token)).IsBroken)
+        {
+            Interlocked.Increment(ref healthy);
+            return;
+        }
+        var dir = outDir ?? Path.Combine(Path.GetDirectoryName(input)!, "Recovered");
+        var result = await photoRecovery.RecoverAsync(input, Path.Combine(dir, "Photos"), token);
+        lock (gate)
+        {
+            if (result.Success) ok++; else failed++;
+            Console.WriteLine($"{(result.Success ? "OK  " : "FAIL")} {Path.GetFileName(input)}: {result.Message}");
+        }
+    });
+    if (healthy > 0)
+        Console.WriteLine($"skipped {healthy} healthy photos");
+
+    foreach (var input in videos)
+    {
+        var dir = Path.Combine(outDir ?? Path.Combine(Path.GetDirectoryName(input)!, "Recovered"), "Videos");
+        var output = Path.Combine(dir, Path.GetFileNameWithoutExtension(input) + "_recovered.mp4");
+        var result = await videoRecovery.RecoverAsync(input, output, videoOptions, new Progress<string>(Console.WriteLine), ct);
+        if (result.Success) ok++; else failed++;
+        Console.WriteLine(result.Success ? $"OK   {output}" : $"FAIL {Path.GetFileName(input)}: {result.Message}");
+    }
+
+    Console.WriteLine($"recovered {ok}, nothing salvageable {failed}");
+    return ok > 0 || failed == 0 ? 0 : 4;
 }
 
 sealed class Args
@@ -157,7 +204,7 @@ sealed class Args
     private readonly List<(string Key, string? Value)> _named = [];
     public List<string> Positional { get; } = [];
 
-    private static readonly HashSet<string> Switches = ["--move", "--keep-extensions", "--keep-duplicates", "--include-unknown", "--deep-verify"];
+    private static readonly HashSet<string> Switches = ["--move", "--keep-extensions", "--keep-duplicates", "--include-unknown", "--deep-verify", "--no-photo-verify"];
 
     public Args(string[] args)
     {

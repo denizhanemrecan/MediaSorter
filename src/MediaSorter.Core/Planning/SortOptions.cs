@@ -12,6 +12,7 @@ public sealed record SortOptions
     public bool FixExtensions { get; init; } = true;
     public bool SkipDuplicates { get; init; } = true;
     public bool IncludeUnknown { get; init; }
+    public bool VerifyPhotosByDecoding { get; init; } = true;
     public bool DeepVerifyVideos { get; init; }
     public int MaxParallelism { get; init; } = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
     public string? FfmpegDirectory { get; init; }

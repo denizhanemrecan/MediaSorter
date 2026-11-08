@@ -3,11 +3,11 @@ using System.Text;
 
 namespace MediaSorter.Core.Tools;
 
-public sealed record ProcessResult(int ExitCode, string StdOut, string StdErr);
+public sealed record ProcessResult(int ExitCode, string StdOut, string StdErr, byte[]? StdOutBytes = null);
 
 public static class ProcessRunner
 {
-    public static async Task<ProcessResult> RunAsync(string exe, IEnumerable<string> args, byte[]? stdin, CancellationToken ct)
+    public static async Task<ProcessResult> RunAsync(string exe, IEnumerable<string> args, byte[]? stdin, CancellationToken ct, bool binaryStdout = false)
     {
         var psi = new ProcessStartInfo(exe)
         {
@@ -16,14 +16,18 @@ public static class ProcessRunner
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
+        if (!binaryStdout)
+            psi.StandardOutputEncoding = Encoding.UTF8;
         foreach (var a in args)
             psi.ArgumentList.Add(a);
 
         using var process = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to start {exe}");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stdoutBytes = binaryStdout ? new MemoryStream() : null;
+        Task<string> stdoutTask = binaryStdout
+            ? process.StandardOutput.BaseStream.CopyToAsync(stdoutBytes!, ct).ContinueWith(_ => string.Empty, ct, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default)
+            : process.StandardOutput.ReadToEndAsync(ct);
         var stderrTask = process.StandardError.ReadToEndAsync(ct);
 
         try
@@ -51,6 +55,8 @@ public static class ProcessRunner
             throw;
         }
 
-        return new ProcessResult(process.ExitCode, await stdoutTask.ConfigureAwait(false), await stderrTask.ConfigureAwait(false));
+        var stdout = await stdoutTask.ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
+        return new ProcessResult(process.ExitCode, stdout, stderr, stdoutBytes?.ToArray());
     }
 }

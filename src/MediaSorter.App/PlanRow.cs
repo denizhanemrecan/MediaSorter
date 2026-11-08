@@ -32,7 +32,7 @@ public sealed partial class PlanRow(PlanItem item, string targetRoot) : Observab
     public string Destination => Item.Destination is null ? "" : Path.GetRelativePath(targetRoot, Item.Destination);
     public string Note => Item.Note;
     public bool IsBroken => Item.Category == PlanCategory.Broken;
-    public bool IsRecoverable => IsBroken && Item.Media.Type.Kind == MediaKind.Video;
+    public bool IsRecoverable => IsBroken && Item.Media.Type.Kind is MediaKind.Video or MediaKind.Photo;
 
     [ObservableProperty]
     private string _recovery = "";

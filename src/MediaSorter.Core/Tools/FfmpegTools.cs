@@ -39,6 +39,25 @@ public sealed class FfmpegTools
         return HealthReport.Ok;
     }
 
+    /// <summary>Fully decodes a still image and returns the decoder's complaints (empty = clean).</summary>
+    public async Task<IReadOnlyList<string>> DecodeImageErrorsAsync(string path, CancellationToken ct, bool ignoreTruncation = false)
+    {
+        var r = await RunFfmpegAsync(["-v", "error", "-noautorotate", "-f", "image2", "-i", path, "-frames:v", "1", "-f", "null", "-"], ct).ConfigureAwait(false);
+        return r.StdErr.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => !l.Contains("APP fields", StringComparison.Ordinal))
+            .Where(l => !ignoreTruncation || !l.Contains("overread", StringComparison.Ordinal))
+            .ToList();
+    }
+
+    public async Task<HealthReport> VerifyImageAsync(string path, CancellationToken ct)
+    {
+        var errors = await DecodeImageErrorsAsync(path, ct).ConfigureAwait(false);
+        if (errors.Count == 0)
+            return HealthReport.Ok;
+        bool truncated = errors.Any(e => e.Contains("overread", StringComparison.Ordinal) || e.Contains("EOF", StringComparison.Ordinal));
+        return HealthReport.Broken(truncated ? "image data ends early (truncated)" : "corrupt image data (decoder errors)");
+    }
+
     public async Task<int> CountVideoFramesAsync(string path, CancellationToken ct)
     {
         var r = await ProcessRunner.RunAsync(Ffprobe,
